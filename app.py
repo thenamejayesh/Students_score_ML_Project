@@ -1,17 +1,4 @@
- """
-Streamlit app for predicting 'Score' using your provided model and CSV.
-
-Assumptions (based on the provided CSV):
- - Predictors: Hours_Studied, Attendance, Assignments_Submitted
- - Target: Score
-
-App behaviour:
- - Loads default model from /mnt/data/Student_model (3).pkl (or you may upload one)
- - Loads default CSV from /mnt/data/student_scores (1).csv (or you may upload one)
- - Detects how many features the model expects (when possible) and aligns inputs.
- - Provides simple input UI and a Predict button.
-"""
-
+ 
 import streamlit as st
 import pandas as pd
 import numpy as np
