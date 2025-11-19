@@ -1,154 +1,194 @@
-import os
-import pickle
-from io import BytesIO
-
-import numpy as np
-import pandas as pd
+ # app.py
 import streamlit as st
+import pandas as pd
+import numpy as np
+import pickle
+import os
 from sklearn.preprocessing import LabelEncoder
+from sklearn.exceptions import NotFittedError
 
-# ----------------- Config - change if your filenames differ -----------------
-DEFAULT_MODEL_FILE = "Student_model (1).pkl"
-DEFAULT_CSV_FILE = "student_scores (1).csv"
-# ---------------------------------------------------------------------------
+# ---------- Config ----------
+DEFAULT_MODEL_PATH = "/mnt/data/Student_model (3).pkl"
+DEFAULT_DATA_PATH = "/mnt/data/student_scores (1).csv"
+EXPECTED_FEATURES = ["age", "experience", "salary", "department"]  # training features you mentioned
 
-st.set_page_config(page_title="Student Score Dashboard", layout="wide")
-st.title("📊 Student Score Dashboard")
-st.write("Load the model and training CSV, enter input features, then click **Predict Score**.")
+st.set_page_config(page_title="Student Score Predictor", layout="centered")
 
-# ---------- Sidebar: upload or use defaults ----------
-st.sidebar.header("Model & Data")
-use_defaults = st.sidebar.checkbox("Use default files from current folder if available", value=True)
-uploaded_model = st.sidebar.file_uploader("Upload pickled model (.pkl)", type=["pkl", "joblib"])
-uploaded_csv = st.sidebar.file_uploader("Upload training CSV (for encoder & stats)", type=["csv"])
-
-# ---------- Load model ----------
-@st.cache_data(show_spinner=False)
-def load_model_from_path(path):
+# ---------- Utility functions ----------
+def load_pickle(path):
     with open(path, "rb") as f:
         return pickle.load(f)
 
+def safe_label_encode(series, encoder=None):
+    """
+    If encoder provided (LabelEncoder instance), use it; otherwise fit a new encoder and return it.
+    Returns (encoded_array, encoder)
+    """
+    if encoder is None:
+        encoder = LabelEncoder()
+        encoded = encoder.fit_transform(series.astype(str))
+    else:
+        try:
+            encoded = encoder.transform(series.astype(str))
+        except Exception:
+            # fallback: fit encoder to series (useful if encoder doesn't contain all categories)
+            encoder = LabelEncoder()
+            encoded = encoder.fit_transform(series.astype(str))
+    return encoded, encoder
+
+def build_input_df(age, experience, salary, department, encoder=None):
+    """
+    Create a one-row DataFrame with expected features and encoded department.
+    Returns df, encoder_used
+    """
+    df = pd.DataFrame([{
+        "age": age,
+        "experience": experience,
+        "salary": salary,
+        "department": department
+    }])
+    encoded_dept, encoder_used = safe_label_encode(df["department"], encoder)
+    df["department"] = encoded_dept
+    return df[EXPECTED_FEATURES], encoder_used
+
+def reorder_features(df, expected):
+    """
+    Ensure df has columns in expected order. If missing columns raise ValueError.
+    """
+    missing = [c for c in expected if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing features required by model: {missing}")
+    return df[expected]
+
+# ---------- Load defaults if present ----------
+@st.cache_data(show_spinner=False)
+def load_defaults():
+    default_model = None
+    default_data = None
+    model_loaded_from = None
+    data_loaded_from = None
+
+    if os.path.exists(DEFAULT_MODEL_PATH):
+        try:
+            default_model = load_pickle(DEFAULT_MODEL_PATH)
+            model_loaded_from = DEFAULT_MODEL_PATH
+        except Exception as e:
+            default_model = None
+
+    if os.path.exists(DEFAULT_DATA_PATH):
+        try:
+            default_data = pd.read_csv(DEFAULT_DATA_PATH)
+            data_loaded_from = DEFAULT_DATA_PATH
+        except Exception:
+            default_data = None
+
+    return default_model, model_loaded_from, default_data, data_loaded_from
+
+default_model, default_model_path, default_data, default_data_path = load_defaults()
+
+# ---------- Sidebar: optional uploads and info ----------
+st.sidebar.header("Files / Settings")
+
+uploaded_model = st.sidebar.file_uploader("Upload model (.pkl) (optional)", type=["pkl"])
+uploaded_csv = st.sidebar.file_uploader("Upload dataset CSV (optional) — used to get categories", type=["csv"])
+
 model = None
-model_load_error = None
+encoder = None
+data_df = None
+
+# Load model (uploaded takes precedence)
 if uploaded_model is not None:
     try:
-        # uploaded_model is a BytesIO-like object
-        uploaded_model.seek(0)
         model = pickle.load(uploaded_model)
+        st.sidebar.success("Uploaded model loaded.")
     except Exception as e:
-        model_load_error = f"Error loading uploaded model: {e}"
-elif use_defaults and os.path.exists(DEFAULT_MODEL_FILE):
-    try:
-        model = load_model_from_path(DEFAULT_MODEL_FILE)
-    except Exception as e:
-        model_load_error = f"Error loading model file '{DEFAULT_MODEL_FILE}': {e}"
+        st.sidebar.error(f"Uploaded model could not be loaded: {e}")
 else:
-    model_load_error = "No model provided. Upload a .pkl in the sidebar or place the default file in the app folder."
+    if default_model is not None:
+        model = default_model
+        st.sidebar.write(f"Loaded model from `{default_model_path}`")
+    else:
+        st.sidebar.info("No model loaded yet. Upload .pkl or place it at /mnt/data/Student_model (3).pkl")
 
-# ---------- Load CSV ----------
-train_df = None
-csv_load_error = None
-@st.cache_data(show_spinner=False)
-def load_csv_from_path(path):
-    return pd.read_csv(path)
-
+# Load dataset for categories (uploaded takes precedence)
 if uploaded_csv is not None:
     try:
-        uploaded_csv.seek(0)
-        train_df = pd.read_csv(uploaded_csv)
+        data_df = pd.read_csv(uploaded_csv)
+        st.sidebar.success("Uploaded CSV loaded.")
     except Exception as e:
-        csv_load_error = f"Error loading uploaded CSV: {e}"
-elif use_defaults and os.path.exists(DEFAULT_CSV_FILE):
-    try:
-        train_df = load_csv_from_path(DEFAULT_CSV_FILE)
-    except Exception as e:
-        csv_load_error = f"Error loading CSV file '{DEFAULT_CSV_FILE}': {e}"
+        st.sidebar.error(f"Uploaded CSV could not be read: {e}")
 else:
-    csv_load_error = "No CSV provided. Upload a CSV in the sidebar or place the default file in the app folder."
-
-# ---------- Show status ----------
-col_status_1, col_status_2 = st.columns(2)
-with col_status_1:
-    if model is not None:
-        st.success("✅ Model loaded")
-        st.caption(f"Model type: `{type(model).__name__}`")
+    if default_data is not None:
+        data_df = default_data
+        st.sidebar.write(f"Loaded CSV from `{default_data_path}`")
     else:
-        st.error(model_load_error)
+        st.sidebar.info("No CSV loaded. Upload CSV or place it at /mnt/data/student_scores (1).csv")
 
-with col_status_2:
-    if train_df is not None:
-        st.success(f"✅ CSV loaded ({len(train_df):,} rows)")
-        st.caption(f"Columns: {', '.join(list(train_df.columns[:10]))}{'...' if len(train_df.columns)>10 else ''}")
-    else:
-        st.error(csv_load_error)
-
-# Stop if model missing (can't predict)
-if model is None:
-    st.info("Provide a model to enable prediction.")
-    st.stop()
-
-# ---------- Build LabelEncoder for department (if possible) ----------
-le = None
-dept_options = []
-if train_df is not None and "department" in train_df.columns:
+# Try to detect encoder saved inside model
+if model is not None:
+    # Common patterns: model might be a pipeline, a dict, or an sklearn estimator
     try:
-        le = LabelEncoder()
-        le.fit(train_df["department"].astype(str).unique().tolist())
-        dept_options = list(le.classes_)
+        # If model is a dict-like with encoder saved
+        if isinstance(model, dict) and "encoder" in model:
+            encoder = model["encoder"]
+        # If it's a custom object with attribute encoder
+        elif hasattr(model, "encoder"):
+            encoder = getattr(model, "encoder")
+        # If it's a pipeline, try to find a LabelEncoder or similar in steps (best-effort)
+        elif hasattr(model, "named_steps"):
+            for name, step in model.named_steps.items():
+                if hasattr(step, "classes_") or isinstance(step, LabelEncoder):
+                    encoder = step
+                    break
     except Exception:
-        le = None
-        dept_options = []
+        encoder = None
 
-# ---------- Dashboard layout ----------
-left, right = st.columns((2, 3))
+# If no encoder found but data_df available, fit encoder from its department column
+if encoder is None and data_df is not None:
+    if "department" in data_df.columns:
+        try:
+            _, encoder = safe_label_encode(data_df["department"])
+            st.sidebar.write("Fitted LabelEncoder from dataset `department` column.")
+        except Exception:
+            encoder = None
 
-with left:
-    st.markdown("### Input Features")
-    with st.form("predict_form"):
-        # sensible defaults from training CSV if available
-        def safe_median(col, fallback):
-            try:
-                if train_df is not None and col in train_df.columns:
-                    return float(train_df[col].median())
-            except Exception:
-                pass
-            return fallback
+# Provide department choices for UI, attempting to use data_df if available
+dept_options = []
+if data_df is not None and "department" in data_df.columns:
+    dept_options = sorted(data_df["department"].astype(str).unique().tolist())
+else:
+    # sensible fallback options
+    dept_options = ["Sales", "HR", "Finance", "IT", "Marketing", "Operations"]
 
-        age = st.number_input("Age", min_value=0, max_value=200, value=int(safe_median("age", 25)))
-        experience = st.number_input("Experience (years)", min_value=0.0, max_value=100.0,
-                                     value=float(safe_median("experience", 1.0)), step=0.5)
-        salary = st.number_input("Salary", min_value=0.0, value=float(safe_median("salary", 30000.0)), step=100.0, format="%.2f")
-        if dept_options:
-            department = st.selectbox("Department", options=dept_options)
-        else:
-            department = st.text_input("Department (type)")
+# ---------- Main UI ----------
+st.title("Student / Employee Score Predictor")
+st.write("Enter all features below (age, experience, salary, department) and press **Predict**.")
 
-        st.write("")  # spacing
-        predict_btn = st.form_submit_button("🔮 Predict Score")
+col1, col2 = st.columns(2)
+with col1:
+    age = st.number_input("Age", min_value=0, max_value=120, value=25, step=1)
+    salary = st.number_input("Salary", min_value=0.0, value=30000.0, step=100.0, format="%.2f")
+with col2:
+    experience = st.number_input("Experience (years)", min_value=0.0, max_value=80.0, value=2.0, step=0.5)
+    department = st.selectbox("Department", options=dept_options)
 
-    # Extra: let user save encoder mapping (optional)
-    if le is not None:
-        if st.checkbox("Show department encoding mapping"):
-            mapping_df = pd.DataFrame({"department": list(le.classes_), "encoded": le.transform(list(le.classes_))})
-            st.table(mapping_df)
+st.markdown("---")
+st.write("Model & preprocessing status:")
+if model is None:
+    st.error("No model loaded. Upload a .pkl model file in the sidebar or place it at `/mnt/data/Student_model (3).pkl`.")
+else:
+    st.success("Model loaded.")
 
-with right:
-    st.markdown("### Prediction & Insights")
-    # Placeholder containers
-    pred_placeholder = st.empty()
-    info_placeholder = st.empty()
-    viz_placeholder = st.container()
+if encoder is None:
+    st.warning("No label encoder available. Department will be fitted on-the-fly (may differ from model training).")
+else:
+    st.info("LabelEncoder is available for department encoding.")
 
-# ---------- Prediction logic ----------
-if predict_btn:
-    # Validate inputs
-    if any(v is None or (isinstance(v, str) and v.strip() == "") for v in [age, experience, salary, department]):
-        st.error("All features are required. Please fill every field.")
+# Predict button
+if st.button("Predict"):
+    if model is None:
+        st.error("Cannot predict: no model loaded.")
     else:
-        # encode department
-        if le is not None:
-            dept_str = str(department)
-            if dept_str in le.classes_:
-                dept_enc = int(le.transform([dept_str])[0])
-            else:
-                 st.info("Enter the values and press **Predict Score**.")
+        try:
+            # Build input row and encode department consistently
+            i
