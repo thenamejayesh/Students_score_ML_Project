@@ -151,4 +151,4 @@ if predict_btn:
             if dept_str in le.classes_:
                 dept_enc = int(le.transform([dept_str])[0])
             else:
-                # unseen -> sentinel
+                
