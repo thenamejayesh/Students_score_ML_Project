@@ -77,6 +77,8 @@ def human_dtype(col: pd.Series) -> str:
 
 # ----------------- Sidebar: Uploads & Settings -----------------
 # Sidebar removed as requested
+uploaded_model = None
+uploaded_csv = None
 show_raw = False
 enable_batch = False
 uploaded_model = None
