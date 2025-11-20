@@ -7,8 +7,8 @@ import os
 from typing import Optional
 
 # paths (use the inbuilt files you uploaded)
-DEFAULT_MODEL = "/mnt/data/Student_model (3).pkl"
-DEFAULT_CSV = "/mnt/data/student_scores (1).csv"
+DEFAULT_MODEL = "Student_model (3).pkl" 
+DEFAULT_CSV = "student_scores (1).csv"
 
 st.set_page_config(page_title="Score Predictor", layout="centered")
 
