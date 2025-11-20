@@ -1,22 +1,4 @@
- Skip to content
-Chat history
 
-You said:
-hey please edit my code that i will paste such that i have dynamic dashboard having interactive interface 
-ChatGPT said:
-Sure! Please paste your current app.py code here, and I will edit it to create a dynamic, interactive Streamlit dashboard with:
-
-✅ Clean UI
-✅ Sidebar navigation
-✅ Interactive charts
-✅ Predict button
-✅ Proper model loading
-✅ Error-free logic
-
-Just paste your code below!
-
-You said:
- 
 import streamlit as st
 import pandas as pd
 import numpy as np
