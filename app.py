@@ -1,39 +1,49 @@
- 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
 import os
-from typing import Optional
+from typing import Optional, Any, Dict
 
-# paths (use the inbuilt files you uploaded)
-DEFAULT_MODEL = "Student_model (3).pkl" 
+# ----------------- Configuration -----------------
+DEFAULT_MODEL = "Student_model (3).pkl"
 DEFAULT_CSV = "student_scores (1).csv"
 
-st.set_page_config(page_title="Score Predictor", layout="centered")
+st.set_page_config(page_title="Score Predictor", layout="wide")
 
-# Helper utilities
-def load_model(path: str):
+# ----------------- Utilities -----------------
+
+def load_model_from_path(path: str) -> Any:
     with open(path, "rb") as f:
         return pickle.load(f)
 
-def get_estimator_from_loaded(obj):
-    """
-    If the pickle is a dict like {'model':..., 'encoder':...} return obj['model'].
-    Otherwise return obj itself.
-    """
-    if isinstance(obj, dict) and "model" in obj:
-        return obj["model"]
+
+def safe_load_pickle_file(uploaded) -> Any:
+    """Load uploaded file-like object via pickle safely."""
+    try:
+        return pickle.load(uploaded)
+    except Exception as e:
+        raise RuntimeError(f"Could not unpickle uploaded file: {e}")
+
+
+def extract_estimator(obj: Any) -> Any:
+    """If pickle is a dict containing 'model' or 'estimator', extract it.
+    Otherwise return obj unchanged."""
+    if isinstance(obj, dict):
+        for key in ("model", "estimator", "pipeline"):
+            if key in obj:
+                return obj[key]
     return obj
 
-def infer_expected_features(estimator) -> Optional[int]:
-    """Try to infer number of features model expects; return int or None."""
+
+def infer_n_features(estimator) -> Optional[int]:
     try:
         n = getattr(estimator, "n_features_in_", None)
         if n is not None:
             return int(n)
     except Exception:
         pass
+    # fallback: coef_ shape
     try:
         coef = getattr(estimator, "coef_", None)
         if coef is not None:
@@ -46,130 +56,228 @@ def infer_expected_features(estimator) -> Optional[int]:
         pass
     return None
 
-# Load default CSV (for showing sample and advice)
-default_df = None
-if os.path.exists(DEFAULT_CSV):
+
+# ----------------- Load defaults (if present) -----------------
+
+def load_default_csv(path: str) -> Optional[pd.DataFrame]:
+    if os.path.exists(path):
+        try:
+            return pd.read_csv(path)
+        except Exception:
+            return None
+    return None
+
+
+def human_dtype(col: pd.Series) -> str:
+    if pd.api.types.is_numeric_dtype(col):
+        return "numeric"
+    else:
+        return "categorical"
+
+
+# ----------------- Sidebar: Uploads & Settings -----------------
+with st.sidebar.expander("Upload files & settings", expanded=True):
+    st.sidebar.markdown("**Optional:** upload a trained `.pkl` model (or pipeline) and a CSV dataset.")
+    uploaded_model = st.sidebar.file_uploader("Upload model (.pkl)", type=["pkl"])
+    uploaded_csv = st.sidebar.file_uploader("Upload CSV (optional)", type=["csv"])    
+    st.sidebar.markdown("---")
+    show_raw = st.sidebar.checkbox("Show raw dataset (if available)", value=False)
+    enable_batch = st.sidebar.checkbox("Enable batch prediction (CSV -> predictions)", value=True)
+
+# try loading dataset
+user_df = None
+if uploaded_csv is not None:
     try:
-        default_df = pd.read_csv(DEFAULT_CSV)
-    except Exception:
-        default_df = None
+        user_df = pd.read_csv(uploaded_csv)
+        st.sidebar.success("Uploaded CSV loaded")
+    except Exception as e:
+        st.sidebar.error(f"Could not read uploaded CSV: {e}")
+else:
+    user_df = load_default_csv(DEFAULT_CSV)
+    if user_df is not None:
+        st.sidebar.info(f"Loaded default CSV: {DEFAULT_CSV}")
 
-# Sidebar uploads
-st.sidebar.header("Files (optional)")
-uploaded_model = st.sidebar.file_uploader("Upload model (.pkl)", type=["pkl"])
-uploaded_csv = st.sidebar.file_uploader("Upload CSV (optional)", type=["csv"])
-
+# try loading model
 model_obj = None
 if uploaded_model is not None:
     try:
-        model_obj = pickle.load(uploaded_model)
-        st.sidebar.success("Uploaded model loaded.")
+        # Uploaded file is a BytesIO-like object; seek to start
+        uploaded_model.seek(0)
+        model_obj = safe_load_pickle_file(uploaded_model)
+        st.sidebar.success("Uploaded model loaded")
     except Exception as e:
-        st.sidebar.error(f"Could not load uploaded model: {e}")
+        st.sidebar.error(str(e))
 else:
     if os.path.exists(DEFAULT_MODEL):
         try:
-            model_obj = load_model(DEFAULT_MODEL)
-            st.sidebar.info(f"Loaded model from {DEFAULT_MODEL}")
+            model_obj = load_model_from_path(DEFAULT_MODEL)
+            st.sidebar.info(f"Loaded default model: {DEFAULT_MODEL}")
         except Exception as e:
             st.sidebar.warning(f"Could not load default model: {e}")
     else:
-        st.sidebar.info("No model found at default path.")
+        st.sidebar.warning("No default model found. Upload a .pkl in the sidebar.")
 
-# CSV handling for dataset preview & sanity
-if uploaded_csv is not None:
-    try:
-        default_df = pd.read_csv(uploaded_csv)
-        st.sidebar.success("Uploaded CSV loaded.")
-    except Exception as e:
-        st.sidebar.error(f"Could not read uploaded CSV: {e}")
+# extract estimator if needed
+estimator = extract_estimator(model_obj) if model_obj is not None else None
 
-# Show sample dataset info
-st.title("Score Predictor (using your dataset & model)")
-if default_df is not None:
-    st.markdown("**Dataset preview (first 5 rows)**")
-    st.dataframe(default_df.head(5))
-    st.write(f"Columns found: {default_df.columns.tolist()}")
-else:
-    st.info("No dataset preview available. Place your CSV at `/mnt/data/student_scores (1).csv` or upload it in the sidebar.")
+# ----------------- Main layout -----------------
+col1, col2 = st.columns((2, 1))
 
-# Input fields (based on CSV features)
-st.markdown("---")
-st.header("Enter features for prediction")
+with col1:
+    st.title("Score Predictor — Interactive Dashboard")
+    st.markdown(
+        "Use the sidebar to upload a model (pickle) and/or a CSV.\n"
+        "The app will try to create dynamic inputs from the dataset columns so you can make single predictions or batch predictions."
+    )
 
-# Default values (sensible guesses)
-hours = st.number_input("Hours_Studied", min_value=0.0, value=5.0, step=0.5, format="%.2f")
-attendance = st.number_input("Attendance (percentage or count)", min_value=0.0, value=85.0, step=1.0, format="%.2f")
-assignments = st.number_input("Assignments_Submitted", min_value=0, value=8, step=1)
-
-# Build input dataframe
-input_df = pd.DataFrame([{
-    "Hours_Studied": hours,
-    "Attendance": attendance,
-    "Assignments_Submitted": assignments
-}])
-
-st.markdown("### Input preview")
-st.dataframe(input_df)
-
-# If model missing, show helpful guidance and stop
-if model_obj is None:
-    st.error("No model loaded. Upload a .pkl model in the sidebar or place it at /mnt/data/Student_model (3).pkl")
-    st.stop()
-
-# Extract estimator if pickle stores extra objects
-estimator = get_estimator_from_loaded(model_obj)
-
-# Try to infer expected input feature count
-expected_n = infer_expected_features(estimator)
-if expected_n is not None:
-    st.info(f"Model appears to expect **{expected_n}** input features.")
-else:
-    st.info("Model expected feature count could not be determined automatically.")
-
-# Decide what to send to the model
-# Most likely: model expects 3 features (Hours_Studied, Attendance, Assignments_Submitted)
-final_X = None
-if expected_n is None or expected_n == 3:
-    # send the three numeric columns
-    final_X = input_df[["Hours_Studied", "Attendance", "Assignments_Submitted"]].values
-    st.write("Sending columns: Hours_Studied, Attendance, Assignments_Submitted")
-elif expected_n == 4:
-    # if model expects 4 features, try adding a placeholder for Score or a zero column (rare)
-    # but safer to let user choose columns
-    st.warning("Model expects 4 features while we have 3 inputs. Please choose which columns to send or upload a model trained on these 3 features.")
-    cols = st.multiselect("Choose columns to send to model (order matters)", options=input_df.columns.tolist(), default=input_df.columns.tolist())
-    if len(cols) == 0:
-        st.error("No columns selected.")
+    if user_df is None:
+        st.info("No dataset available. Upload a CSV in the sidebar or place one at `/mnt/data/student_scores (1).csv`.")
     else:
-        final_X = input_df[cols].values
-else:
-    # unexpected feature count: let user choose columns to send
-    st.warning("Model expected feature count is unusual. Choose which columns to send (order matters).")
-    cols = st.multiselect("Choose columns to send to model (order matters)", options=input_df.columns.tolist(), default=input_df.columns.tolist())
-    if len(cols) == 0:
-        st.error("No columns selected.")
-    else:
-        final_X = input_df[cols].values
+        if show_raw:
+            st.subheader("Dataset preview")
+            st.dataframe(user_df.head(10))
 
-# Predict button
-if st.button("Predict"):
-    if final_X is None:
-        st.error("No input prepared for prediction.")
-    else:
-        try:
-            pred = estimator.predict(final_X)
-            # If array-like, take first
-            pred_val = pred[0] if hasattr(pred, "__len__") else pred
-            st.success(f"Predicted Score: **{pred_val}**")
-            st.write("Raw model output:", pred)
-            st.write("Final matrix shape sent to model:", final_X.shape)
-        except Exception as e:
-            st.error("Prediction failed. See details below.")
-            st.exception(e)
+    st.markdown("---")
 
-# Footer / tips
-st.markdown("---")
-st.write("Tips:")
-st.write("- If you trained the model on the 3 numeric features (Hours_Studied, Attendance, Assignments_Submitted) then this app will work as-is.")
-st.write("- If your model was trained with a different preprocessing pipeline (scaling, encoders, feature selection), best practice is to save the full pipeline (or save a dict with 'model' + any preprocessing objects) and upload it here.")
+    # If dataset exists, create dynamic input form
+    if user_df is not None:
+        st.subheader("Create input (single prediction)")
+        # Use first row as defaults where possible
+        sample = user_df.head(1).copy()
+        # Ask user which column is target (optional)
+        target_col = st.selectbox("(Optional) Select target/label column (will be ignored for inputs)", options=[None] + user_df.columns.tolist())
+
+        # Build list of feature columns
+        feature_cols = [c for c in user_df.columns.tolist() if c != target_col]
+        st.info(f"Detected feature columns: {feature_cols}")
+
+        # Make a form for input
+        with st.form("single_input_form"):
+            input_data = {}
+            for col in feature_cols:
+                col_ser = user_df[col]
+                dtype = human_dtype(col_ser)
+                if dtype == "numeric":
+                    mn = float(np.nanmin(col_ser)) if not col_ser.isna().all() else 0.0
+                    mx = float(np.nanmax(col_ser)) if not col_ser.isna().all() else 1.0
+                    mean = float(np.nanmean(col_ser)) if not col_ser.isna().all() else 0.0
+                    # give reasonable slider/number input
+                    if (mx - mn) > 1000 or mx == mn:
+                        val = st.number_input(col, value=mean)
+                    else:
+                        step = (mx - mn) / 100 if (mx - mn) != 0 else 1.0
+                        val = st.slider(col, min_value=mn, max_value=mx, value=mean, step=step)
+                    input_data[col] = val
+                else:
+                    # treat as categorical: provide selectbox with top values
+                    uniques = col_ser.dropna().unique().tolist()
+                    default = uniques[0] if uniques else ""
+                    val = st.selectbox(col, options=uniques + ["Other (type below)"], index=0 if uniques else 0)
+                    if val == "Other (type below)":
+                        val = st.text_input(f"Enter value for {col}", value="")
+                    input_data[col] = val
+
+            submitted = st.form_submit_button("Predict single")
+
+        if submitted:
+            if estimator is None:
+                st.error("No model loaded. Upload a .pkl model in the sidebar or place one at the default path.")
+            else:
+                # prepare dataframe for prediction
+                X = pd.DataFrame([input_data])
+                st.write("Input to be sent to model:")
+                st.dataframe(X)
+                try:
+                    # If saved model is a pipeline that expects exact columns, try to send full X
+                    pred = estimator.predict(X)
+                except Exception:
+                    # fallback: send numpy array
+                    try:
+                        pred = estimator.predict(X.values)
+                    except Exception as e:
+                        st.error("Prediction failed. See exception below.")
+                        st.exception(e)
+                        pred = None
+
+                if pred is not None:
+                    val = pred[0] if hasattr(pred, "__len__") else pred
+                    st.success(f"Predicted value: {val}")
+                    # show additional info
+                    if hasattr(estimator, "predict_proba"):
+                        try:
+                            proba = estimator.predict_proba(X)
+                            st.write("Model predict_proba output:")
+                            st.write(proba)
+                        except Exception:
+                            pass
+
+    else:
+        st.info("Upload a CSV to create a dynamic input form.")
+
+    st.markdown("---")
+
+    # Batch prediction (CSV)
+    if enable_batch and user_df is not None and estimator is not None:
+        st.subheader("Batch predict: run predictions on entire dataset")
+        if st.button("Run batch prediction on dataset"):
+            try:
+                X_batch = user_df.copy()
+                if target_col is not None and target_col in X_batch.columns:
+                    X_batch = X_batch.drop(columns=[target_col])
+                try:
+                    preds = estimator.predict(X_batch)
+                except Exception:
+                    preds = estimator.predict(X_batch.values)
+
+                # append predictions
+                out = user_df.copy()
+                out["_prediction"] = preds
+                st.success("Batch prediction finished — preview below")
+                st.dataframe(out.head(20))
+                csv = out.to_csv(index=False).encode("utf-8")
+                st.download_button("Download predictions CSV", data=csv, file_name="predictions.csv")
+            except Exception as e:
+                st.error("Batch prediction failed")
+                st.exception(e)
+
+with col2:
+    st.sidebar.header("Model diagnostics")
+    if estimator is None:
+        st.sidebar.info("No model loaded yet.")
+    else:
+        st.sidebar.success("Model loaded")
+        # show type and inferred input count
+        st.sidebar.write("Model type:", type(estimator))
+        nfeat = infer_n_features(estimator)
+        if nfeat is not None:
+            st.sidebar.write(f"Inferred input features: {nfeat}")
+
+        # show feature importance if available
+        if hasattr(estimator, "feature_importances_"):
+            try:
+                fi = np.array(estimator.feature_importances_)
+                st.sidebar.subheader("Feature importances")
+                st.sidebar.write(fi)
+            except Exception:
+                pass
+
+    st.sidebar.markdown("---")
+    st.subheader("Quick EDA (if dataset available)")
+    if user_df is None:
+        st.info("No dataset for EDA.")
+    else:
+        # show simple stats
+        st.write("Dataset shape:", user_df.shape)
+        numeric = user_df.select_dtypes(include=[np.number])
+        if not numeric.empty:
+            col = st.selectbox("Choose numeric column to inspect", options=numeric.columns.tolist())
+            st.write(numeric[col].describe())
+            st.bar_chart(numeric[col].dropna())
+        else:
+            st.info("No numeric columns for charts.")
+
+    st.markdown("---")
+    st.write("Tips:")
+    st.write("- If your model was trained as a pipeline, pickle and upload the whole pipeline (preprocessing + estimator).\n- If categorical columns exist, ensure the pipeline contains encoders so the app does not need manual encoding.\n- If predictions fail, check that column names and ordering in the dataset match what the model expects.")
+
+# End of file
