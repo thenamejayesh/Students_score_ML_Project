@@ -144,11 +144,14 @@ with col1:
         # Use first row as defaults where possible
         sample = user_df.head(1).copy()
         # Ask user which column is target (optional)
-        target_col = st.selectbox("(Optional) Select target/label column (will be ignored for inputs)", options=[None] + user_df.columns.tolist())
+        # Auto-remove Score column as target if present
+target_col = "Score" if "Score" in user_df.columns else None Select target/label column (will be ignored for inputs)", options=[None] + user_df.columns.tolist())
 
         # Build list of feature columns
         feature_cols = [c for c in user_df.columns.tolist() if c != target_col]
-        st.info(f"Detected feature columns: {feature_cols}")
+        # Remove Score column from input interface automatically
+feature_cols = [c for c in user_df.columns.tolist() if c != target_col]
+st.info(f"Detected feature columns (Score removed): {feature_cols}")
 
         # Make a form for input
         with st.form("single_input_form"):
