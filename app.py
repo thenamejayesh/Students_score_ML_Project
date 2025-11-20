@@ -56,4 +56,55 @@ model = extract_model(model_obj)
 st.title("🎯 Student Score Predictor")
 
 if df is not None:
-    st.subheader("📘 Datase
+    st.subheader("📘 Dataset Preview")
+    st.dataframe(df.head(5))
+else:
+    st.info("Could not load dataset preview. Ensure student_scores (1).csv exists.")
+
+st.markdown("---")
+st.header("Enter Details for Prediction")
+
+# --------------------------------------------------
+# Only 3 Features (As You Requested)
+# --------------------------------------------------
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    Hours_Studied = st.number_input("Hours Studied", min_value=0.0, value=5.0, step=0.5)
+
+with col2:
+    Attendance = st.number_input("Attendance (%)", min_value=0.0, value=85.0, step=1.0)
+
+with col3:
+    Assignments = st.number_input("Assignments Submitted", min_value=0, value=8, step=1)
+
+# Prepare 3-feature input
+input_df = pd.DataFrame([{
+    "Hours_Studied": Hours_Studied,
+    "Attendance": Attendance,
+    "Assignments_Submitted": Assignments
+}])
+
+st.subheader("🔍 Input Preview")
+st.dataframe(input_df)
+
+# --------------------------------------------------
+# Predict Button
+# --------------------------------------------------
+if st.button("Predict Score"):
+    try:
+        X = input_df.values  # always 3-column input
+        pred = model.predict(X)
+        result = pred[0]
+
+        st.success(f"📊 Predicted Score: **{result}**")
+
+    except Exception as e:
+        st.error("❌ Prediction failed!")
+        st.exception(e)
+
+# --------------------------------------------------
+# Footer
+# --------------------------------------------------
+st.markdown("---")
+st.caption("This app uses exactly **3 input features** and automatically loads the inbuilt model & dataset.")
