@@ -76,13 +76,11 @@ def human_dtype(col: pd.Series) -> str:
 
 
 # ----------------- Sidebar: Uploads & Settings -----------------
-with st.sidebar.expander("Upload files & settings", expanded=True):
-    st.sidebar.markdown("**Optional:** upload a trained `.pkl` model (or pipeline) and a CSV dataset.")
-    uploaded_model = st.sidebar.file_uploader("Upload model (.pkl)", type=["pkl"])
-    uploaded_csv = st.sidebar.file_uploader("Upload CSV (optional)", type=["csv"])    
-    st.sidebar.markdown("---")
-    show_raw = st.sidebar.checkbox("Show raw dataset (if available)", value=False)
-    enable_batch = st.sidebar.checkbox("Enable batch prediction (CSV -> predictions)", value=True)
+# Sidebar removed as requested
+show_raw = False
+enable_batch = False
+uploaded_model = None
+uploaded_csv = None("Enable batch prediction (CSV -> predictions)", value=True)
 
 # try loading dataset
 user_df = None
@@ -255,44 +253,5 @@ with col1:
                 st.error("Batch prediction failed")
                 st.exception(e)
 
-with col2:
-    st.sidebar.header("Model diagnostics")
-    if estimator is None:
-        st.sidebar.info("No model loaded yet.")
-    else:
-        st.sidebar.success("Model loaded")
-        # show type and inferred input count
-        st.sidebar.write("Model type:", type(estimator))
-        nfeat = infer_n_features(estimator)
-        if nfeat is not None:
-            st.sidebar.write(f"Inferred input features: {nfeat}")
-
-        # show feature importance if available
-        if hasattr(estimator, "feature_importances_"):
-            try:
-                fi = np.array(estimator.feature_importances_)
-                st.sidebar.subheader("Feature importances")
-                st.sidebar.write(fi)
-            except Exception:
-                pass
-
-    st.sidebar.markdown("---")
-    st.subheader("Quick EDA (if dataset available)")
-    if user_df is None:
-        st.info("No dataset for EDA.")
-    else:
-        # show simple stats
-        st.write("Dataset shape:", user_df.shape)
-        numeric = user_df.select_dtypes(include=[np.number])
-        if not numeric.empty:
-            col = st.selectbox("Choose numeric column to inspect", options=numeric.columns.tolist())
-            st.write(numeric[col].describe())
-            st.bar_chart(numeric[col].dropna())
-        else:
-            st.info("No numeric columns for charts.")
-
-    st.markdown("---")
-    st.write("Tips:")
-    st.write("- If your model was trained as a pipeline, pickle and upload the whole pipeline (preprocessing + estimator).\n- If categorical columns exist, ensure the pipeline contains encoders so the app does not need manual encoding.\n- If predictions fail, check that column names and ordering in the dataset match what the model expects.")
-
+# Right column removed completely as sidebar removed
 # End of file
