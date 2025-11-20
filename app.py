@@ -185,6 +185,12 @@ with col1:
             else:
                 # prepare dataframe for prediction
                 X = pd.DataFrame([input_data])
+                # Auto-drop extra column if model expects 3 features
+                try:
+                    if infer_n_features(estimator) == 3 and X.shape[1] == 4:
+                        X = X.iloc[:, :-1]
+                except Exception:
+                    pass
                 st.write("Input to be sent to model:")
                 st.dataframe(X)
                 try:
@@ -222,6 +228,15 @@ with col1:
         if st.button("Run batch prediction on dataset"):
             try:
                 X_batch = user_df.copy()
+                # Auto-drop extra column if model expects 3 features
+                try:
+                    if infer_n_features(estimator) == 3 and X_batch.shape[1] == 4:
+                        if target_col is not None and target_col in X_batch.columns:
+                            X_batch = X_batch.drop(columns=[target_col])
+                        else:
+                            X_batch = X_batch.iloc[:, :-1]
+                except Exception:
+                    pass
                 if target_col is not None and target_col in X_batch.columns:
                     X_batch = X_batch.drop(columns=[target_col])
                 try:
