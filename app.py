@@ -81,8 +81,7 @@ uploaded_model = None
 uploaded_csv = None
 show_raw = False
 enable_batch = False
-uploaded_model = None
-uploaded_csv = None("Enable batch prediction (CSV -> predictions)", value=True)
+ (CSV -> predictions)", value=True)
 
 # try loading dataset
 user_df = None
